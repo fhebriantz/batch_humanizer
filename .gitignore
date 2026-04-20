@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+input/*.mp4
+input/*.jpg
+input/*.jpeg
+input/*.png
+output/*.mp4
+output/*.jpg
+output/*.jpeg
+output/*.png
+*.egg-info/
+dist/
+build/
+credential.json
