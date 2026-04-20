@@ -48,13 +48,17 @@ IPHONE_METADATA = {
     "com.apple.quicktime.creationdate": "",  # diisi dinamis
 }
 
-OUTPUT_FPS = 60
+OUTPUT_FPS = 30
 
 # Encoder config
 # MoviePy selalu pakai libx264 (bundled FFmpeg tidak support GPU encoder)
 # GPU encoder hanya untuk FFmpeg CLI post-processing (color jitter, resize)
-FFMPEG_ENCODER = "libx264"
-FFMPEG_ENCODER_OPTS = ["-preset", "medium", "-b:v", "8000k"]
+ACTIVE_ENCODER = {
+    "name": "libx264",
+    "input_args": [],
+    "filter_suffix": "",
+    "output_args": ["-preset", "medium", "-b:v", "8000k"],
+}
 
 VIDEO_EXTS = {".mp4"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
@@ -358,14 +362,15 @@ def ffmpeg_post_process(video_path: Path, features: dict):
         return
 
     tmp_path = video_path.with_suffix(".post.mp4")
-    vf = ",".join(filters)
+    vf = ",".join(filters) + ACTIVE_ENCODER["filter_suffix"]
 
     cmd = [
         "ffmpeg", "-y",
+        *ACTIVE_ENCODER["input_args"],
         "-i", str(video_path),
         "-vf", vf,
-        "-c:v", FFMPEG_ENCODER,
-        *FFMPEG_ENCODER_OPTS,
+        "-c:v", ACTIVE_ENCODER["name"],
+        *ACTIVE_ENCODER["output_args"],
         "-c:a", "copy",
         str(tmp_path),
     ]
@@ -374,7 +379,8 @@ def ffmpeg_post_process(video_path: Path, features: dict):
     if result.returncode != 0:
         if tmp_path.exists():
             tmp_path.unlink()
-        raise RuntimeError(f"FFmpeg post-process gagal: {result.stderr[:300]}")
+        tail = "\n".join(result.stderr.strip().splitlines()[-8:])
+        raise RuntimeError(f"FFmpeg post-process gagal (encoder={ACTIVE_ENCODER['name']}):\n{tail}")
 
     video_path.unlink()
     tmp_path.rename(video_path)
@@ -642,32 +648,75 @@ def parse_args():
     return parser.parse_args()
 
 
-def detect_gpu_encoder() -> tuple[str, list[str]] | None:
-    """Deteksi GPU encoder yang tersedia via FFmpeg."""
-    encoders = [
-        ("h264_qsv", ["-preset", "fast", "-b:v", "8000k"]),
-        ("h264_nvenc", ["-preset", "p4", "-b:v", "8000k"]),
-        ("h264_vaapi", ["-b:v", "8000k"]),
+# Urutan prioritas: nvenc (NVIDIA, paling stabil) → vaapi (Intel/AMD Linux) → qsv (Windows/oneVPL)
+GPU_ENCODER_CANDIDATES = [
+    {
+        "name": "h264_nvenc",
+        "input_args": [],
+        "filter_suffix": "",
+        "output_args": ["-preset", "p4", "-b:v", "8000k"],
+    },
+    {
+        "name": "h264_vaapi",
+        "input_args": ["-vaapi_device", "/dev/dri/renderD128"],
+        "filter_suffix": ",format=nv12,hwupload",
+        # Intel VA-API umumnya cuma support CQP rate control, bukan -b:v.
+        # QP 32 dipilih karena grain noise bikin tiap frame unik (no motion redundancy),
+        # sehingga QP rendah bikin file balloon ke ratusan MB. Turunkan kalau nggak pakai grain.
+        "output_args": ["-rc_mode", "CQP", "-qp", "32"],
+    },
+    {
+        "name": "h264_qsv",
+        "input_args": ["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw"],
+        "filter_suffix": ",hwupload=extra_hw_frames=64,format=qsv",
+        "output_args": ["-preset", "fast", "-b:v", "8000k"],
+    },
+]
+
+
+def _encoder_smoke_test(enc: dict) -> bool:
+    """Coba encode 1 frame dummy untuk verifikasi encoder benar-benar jalan."""
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        *enc["input_args"],
+        "-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.1",
+        "-vf", f"null{enc['filter_suffix']}" if enc["filter_suffix"] else "null",
+        "-c:v", enc["name"],
+        *enc["output_args"],
+        "-f", "null", "-",
     ]
-    for enc, opts in encoders:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
-            capture_output=True, text=True,
-        )
-        if enc in result.stdout:
-            return enc, opts
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def detect_gpu_encoder() -> dict | None:
+    """Deteksi GPU encoder yang benar-benar bisa dipakai (smoke-tested)."""
+    listed = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-encoders"],
+        capture_output=True, text=True,
+    ).stdout
+
+    for enc in GPU_ENCODER_CANDIDATES:
+        if enc["name"] not in listed:
+            continue
+        if _encoder_smoke_test(enc):
+            return enc
+        print(f"  [INFO] {enc['name']} terdeteksi tapi gagal smoke-test, coba berikutnya...")
     return None
 
 
 def enable_gpu():
     """Switch encoder ke GPU jika tersedia."""
-    global FFMPEG_ENCODER, FFMPEG_ENCODER_OPTS
+    global ACTIVE_ENCODER
     detected = detect_gpu_encoder()
     if detected:
-        FFMPEG_ENCODER, FFMPEG_ENCODER_OPTS = detected
-        print(f"  GPU encoder: {FFMPEG_ENCODER}")
+        ACTIVE_ENCODER = detected
+        print(f"  GPU encoder aktif: {ACTIVE_ENCODER['name']}")
     else:
-        print("  [WARN] Tidak ada GPU encoder ditemukan, fallback ke libx264 (CPU)")
+        print("  [WARN] Tidak ada GPU encoder yang berfungsi, fallback ke libx264 (CPU)")
 
 
 
