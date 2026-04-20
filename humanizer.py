@@ -23,12 +23,23 @@ from moviepy import VideoFileClip
 INPUT_DIR = Path("input")
 OUTPUT_DIR = Path("output")
 
+# Geometri output
 TARGET_W = 1080             # output width standar 9:16
 TARGET_H = 1920             # output height standar 9:16
 CROP_PERCENT = 0.05         # 5% atas & bawah
+
+# Intensitas efek humanizer
 GRAIN_INTENSITY = 0.05      # 5% noise
 JITTER_SCALE = 1.01         # zoom 1.01x
 JITTER_INTERVAL = 0.5       # ganti offset tiap 0.5 detik
+
+# Encoding & bitrate
+LIBX264_BITRATE = "8000k"   # bitrate final path CPU
+VAAPI_QP = 32               # constant quantizer VA-API (lower = tajam & gede)
+NVENC_BITRATE = "8000k"     # bitrate NVENC
+QSV_BITRATE = "8000k"       # bitrate QSV
+INTERMEDIATE_CRF = "18"     # kualitas MoviePy intermediate (hampir lossless, karena akan di-encode ulang FFmpeg)
+FFMPEG_TIMEOUT = 600        # detik — cegah hang selamanya kalau FFmpeg stuck
 
 IPHONE_METADATA = {
     "Make": "Apple",
@@ -55,7 +66,7 @@ ACTIVE_ENCODER = {
     "name": "libx264",
     "input_args": [],
     "filter_suffix": "",
-    "output_args": ["-preset", "medium", "-b:v", "8000k"],
+    "output_args": ["-preset", "medium", "-b:v", LIBX264_BITRATE],
 }
 
 VIDEO_EXTS = {".mp4"}
@@ -362,18 +373,33 @@ def ffmpeg_post_process(video_path: Path, features: dict):
     tmp_path = video_path.with_suffix(".post.mp4")
     vf = ",".join(filters) + ACTIVE_ENCODER["filter_suffix"]
 
+    # Audio humanize — subtle resample + volume shift untuk ganti audio hash
+    # tanpa perubahan yang kedengeran. Pakai random volume supaya tiap run
+    # beda dikit (0.97–1.0 range — di bawah 1.0 biar nggak pernah clipping).
+    rng = random.Random()
+    audio_volume = rng.uniform(0.97, 1.0)
+    audio_filter = f"aresample=44100,volume={audio_volume:.4f}"
+
     cmd = [
         "ffmpeg", "-y",
         *ACTIVE_ENCODER["input_args"],
         "-i", str(video_path),
         "-vf", vf,
+        "-af", audio_filter,
         "-c:v", ACTIVE_ENCODER["name"],
         *ACTIVE_ENCODER["output_args"],
-        "-c:a", "copy",
+        "-c:a", "aac",
+        "-b:a", "128k",
         str(tmp_path),
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise RuntimeError(f"FFmpeg post-process timeout setelah {FFMPEG_TIMEOUT}s (encoder={ACTIVE_ENCODER['name']})")
+
     if result.returncode != 0:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -417,7 +443,14 @@ def scrub_metadata(video_path: Path):
         str(tmp_path),
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        print(f"  [WARN] FFmpeg metadata scrub timeout setelah {FFMPEG_TIMEOUT}s")
+        if tmp_path.exists():
+            tmp_path.unlink()
+        return
+
     if result.returncode != 0:
         print(f"  [WARN] FFmpeg metadata scrub gagal: {result.stderr[:200]}")
         if tmp_path.exists():
@@ -448,6 +481,12 @@ def process_video(input_path: Path, output_path: Path, features: dict):
     print(f"  Duration   : {clip.duration:.1f}s")
     print(f"  FPS        : {clip.fps}")
 
+    # Tentukan apakah FFmpeg phase akan jalan — berpengaruh ke kualitas MoviePy intermediate
+    will_run_ffmpeg = any([
+        features["mirror"], features["grain"],
+        features["color_jitter"], features["resize"],
+    ])
+
     # === PHASE 1: MoviePy (hanya crop + jitter) ===
     has_moviepy_work = features["crop"] != "none" or features["jitter"]
 
@@ -476,17 +515,32 @@ def process_video(input_path: Path, output_path: Path, features: dict):
         # Restore audio & export — samain fps dengan source
         clip = clip.with_audio(original_audio)
         src_fps = clip.fps
-        print(f"  Exporting via MoviePy @ {src_fps}fps (match source)...")
         temp_audiofile = str(OUTPUT_DIR / f"temp_audio_{output_path.stem}.m4a")
+
+        # Kalau file ini masih intermediate (bakal di-re-encode FFmpeg),
+        # pakai CRF tinggi + preset cepat → minim generation loss & lebih cepat.
+        # Kalau final, pakai bitrate target supaya size terkontrol.
+        if will_run_ffmpeg:
+            print(f"  Exporting via MoviePy @ {src_fps}fps (intermediate, CRF {INTERMEDIATE_CRF})...")
+            write_kwargs = {
+                "preset": "fast",
+                "ffmpeg_params": ["-crf", INTERMEDIATE_CRF],
+            }
+        else:
+            print(f"  Exporting via MoviePy @ {src_fps}fps (final, {LIBX264_BITRATE})...")
+            write_kwargs = {
+                "preset": "medium",
+                "bitrate": LIBX264_BITRATE,
+            }
+
         clip.write_videofile(
             str(output_path),
             fps=src_fps,
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
-            bitrate="8000k",
             logger="bar",
             temp_audiofile=temp_audiofile,
+            **write_kwargs,
         )
         clip.close()
     else:
@@ -653,22 +707,22 @@ GPU_ENCODER_CANDIDATES = [
         "name": "h264_nvenc",
         "input_args": [],
         "filter_suffix": "",
-        "output_args": ["-preset", "p4", "-b:v", "8000k"],
+        "output_args": ["-preset", "p4", "-b:v", NVENC_BITRATE],
     },
     {
         "name": "h264_vaapi",
         "input_args": ["-vaapi_device", "/dev/dri/renderD128"],
         "filter_suffix": ",format=nv12,hwupload",
         # Intel VA-API umumnya cuma support CQP rate control, bukan -b:v.
-        # QP 32 dipilih karena grain noise bikin tiap frame unik (no motion redundancy),
-        # sehingga QP rendah bikin file balloon ke ratusan MB. Turunkan kalau nggak pakai grain.
-        "output_args": ["-rc_mode", "CQP", "-qp", "32"],
+        # Grain noise bikin tiap frame unik (no motion redundancy), jadi QP rendah
+        # bakal bikin file balloon ke ratusan MB. Tuning via VAAPI_QP.
+        "output_args": ["-rc_mode", "CQP", "-qp", str(VAAPI_QP)],
     },
     {
         "name": "h264_qsv",
         "input_args": ["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw"],
         "filter_suffix": ",hwupload=extra_hw_frames=64,format=qsv",
-        "output_args": ["-preset", "fast", "-b:v", "8000k"],
+        "output_args": ["-preset", "fast", "-b:v", QSV_BITRATE],
     },
 ]
 

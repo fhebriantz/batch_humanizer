@@ -3,6 +3,7 @@ Batch Humanizer + Google Sheets Workflow (Update Mode)
 Cari baris yang belum diproses di Sheets → humanize → update baris tersebut.
 """
 
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +31,8 @@ from humanizer import (
 # ============================================================
 
 CREDENTIAL_FILE = Path("credential.json")
-SPREADSHEET_NAME = "Daily_Workflow"
+# Nama spreadsheet bisa di-override via env var SPREADSHEET_NAME
+SPREADSHEET_NAME = os.getenv("SPREADSHEET_NAME", "Daily_Workflow")
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",

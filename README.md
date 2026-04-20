@@ -12,9 +12,11 @@ Menghapus jejak AI (watermark, metadata, tekstur mulus) secara otomatis.
 - **Subtle Jitter** — smooth drift zoom 1.01x (video only)
 - **Color Jitter** — random brightness/contrast/saturation/gamma
 - **Metadata Scrub** — hapus metadata, injeksi metadata iPhone 13 (video only)
-- **GPU Encoding** — auto-detect Intel QSV / NVIDIA NVENC / VAAPI
+- **Audio Jitter** — subtle volume shift + resample 44.1kHz untuk ganti audio fingerprint (video only, otomatis saat post-process FFmpeg aktif)
+- **FPS Matching** — output mengikuti FPS source (30→30, 60→60) tanpa frame duplication/dropping
+- **GPU Encoding** — auto-detect dengan smoke-test real (NVIDIA NVENC → Intel VAAPI → QSV)
 - **Multi-Format** — `.mp4`, `.jpg`, `.jpeg`, `.png`
-- **Google Sheets** — integrasi workflow dengan spreadsheet `Daily_Workflow`
+- **Google Sheets** — integrasi workflow dengan spreadsheet (default `Daily_Workflow`, override via env var `SPREADSHEET_NAME`)
 
 ## Instalasi
 
@@ -75,7 +77,7 @@ Hasil ada di folder `output/`.
 | `--color-jitter` | Random color jitter (FFmpeg) |
 | `--resize` | Fill & crop ke 1080x1920 (FFmpeg) |
 | `--scrub` | Hapus metadata & inject iPhone 13 (video only) |
-| `--gpu` | Gunakan GPU encoder (auto-detect QSV/NVENC/VAAPI) |
+| `--gpu` | Gunakan GPU encoder (auto-detect NVENC/VAAPI/QSV, smoke-test) |
 
 Mode interaktif (tanpa flag) akan tanya y/n untuk setiap fitur.
 
@@ -84,8 +86,13 @@ Mode interaktif (tanpa flag) akan tanya y/n untuk setiap fitur.
 ### Persiapan
 
 1. Letakkan `credential.json` (service account) di root folder project
-2. Share spreadsheet `Daily_Workflow` ke email service account
+2. Share spreadsheet (default `Daily_Workflow`) ke email service account
 3. Kolom spreadsheet: A=No, B=Jam, C=Akun, D=File, E=-, F=Download, G=Humanize, J=Timestamp
+
+**Pakai spreadsheet dengan nama lain?** Set env var sebelum jalankan script:
+```
+SPREADSHEET_NAME="Nama_Spreadsheet_Lain" python workflow.py
+```
 
 ### Alur (Update Mode)
 
@@ -111,13 +118,17 @@ Contoh: Akun_01_20042026-143025.mp4
 ```
 Phase 1 — MoviePy (frame-by-frame, hanya yang harus):
   crop → jitter → export
+  - Output intermediate CRF 18 (hampir lossless) kalau Phase 2 akan jalan
+  - Output final bitrate 8Mbps kalau nggak ada FFmpeg step (hemat size)
 
 Phase 2 — FFmpeg (satu pass, cepat):
-  mirror + grain + color jitter + resize
+  mirror + grain + color jitter + resize + audio jitter (resample + volume)
 
 Phase 3 — FFmpeg (copy stream):
   metadata scrub
 ```
+
+Phase 1 otomatis pilih mode intermediate vs final untuk hindari double encoding loss saat Phase 2 bakal jalan.
 
 ### Image Pipeline (PIL)
 
@@ -149,4 +160,11 @@ Edit variabel di bagian atas `humanizer.py`:
 | `GRAIN_INTENSITY` | `0.05` | Intensitas noise overlay |
 | `JITTER_SCALE` | `1.01` | Skala zoom untuk jitter |
 | `JITTER_INTERVAL` | `0.5` | Interval perubahan jitter (detik) |
-| `OUTPUT_FPS` | `60` | FPS output video |
+| `LIBX264_BITRATE` | `"8000k"` | Bitrate final path CPU (libx264) |
+| `VAAPI_QP` | `32` | Constant quantizer VA-API (lower = tajam & besar) |
+| `NVENC_BITRATE` | `"8000k"` | Bitrate NVIDIA NVENC |
+| `QSV_BITRATE` | `"8000k"` | Bitrate Intel QSV |
+| `INTERMEDIATE_CRF` | `"18"` | Kualitas MoviePy intermediate (nearly lossless) |
+| `FFMPEG_TIMEOUT` | `600` | Timeout FFmpeg dalam detik (cegah hang) |
+
+FPS output otomatis mengikuti source — tidak ada konstanta.
