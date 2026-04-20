@@ -48,8 +48,6 @@ IPHONE_METADATA = {
     "com.apple.quicktime.creationdate": "",  # diisi dinamis
 }
 
-OUTPUT_FPS = 30
-
 # Encoder config
 # MoviePy selalu pakai libx264 (bundled FFmpeg tidak support GPU encoder)
 # GPU encoder hanya untuk FFmpeg CLI post-processing (color jitter, resize)
@@ -475,13 +473,14 @@ def process_video(input_path: Path, output_path: Path, features: dict):
             print(f"  [MoviePy {step}/{moviepy_steps}] Adding subtle jitter (zoom {JITTER_SCALE:.2f}x)...")
             clip = apply_jitter(clip)
 
-        # Restore audio & export
+        # Restore audio & export — samain fps dengan source
         clip = clip.with_audio(original_audio)
-        print(f"  Exporting via MoviePy @ {OUTPUT_FPS}fps...")
+        src_fps = clip.fps
+        print(f"  Exporting via MoviePy @ {src_fps}fps (match source)...")
         temp_audiofile = str(OUTPUT_DIR / f"temp_audio_{output_path.stem}.m4a")
         clip.write_videofile(
             str(output_path),
-            fps=OUTPUT_FPS,
+            fps=src_fps,
             codec="libx264",
             audio_codec="aac",
             preset="medium",
