@@ -1,6 +1,6 @@
 # Batch Video & Image Humanizer
 
-Script Python untuk automasi editing batch video dan gambar AI influencer.
+Script Python untuk automasi editing batch video dan gambar hasil generate AI.
 Menghapus jejak AI (watermark, metadata, tekstur mulus) secara otomatis.
 
 ## Fitur
