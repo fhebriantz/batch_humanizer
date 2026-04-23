@@ -26,7 +26,7 @@ OUTPUT_DIR = Path("output")
 # Geometri output
 TARGET_W = 1080             # output width standar 9:16
 TARGET_H = 1920             # output height standar 9:16
-CROP_PERCENT = 0.05         # 5% atas & bawah
+CROP_PERCENT = 0.035        # 5% atas & bawah
 
 # Intensitas efek humanizer
 GRAIN_INTENSITY = 0.05      # 5% noise
