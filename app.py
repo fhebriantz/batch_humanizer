@@ -2,7 +2,6 @@
 
 import shutil
 import threading
-import zipfile
 from pathlib import Path
 
 import gradio as gr
@@ -74,14 +73,7 @@ def run_humanizer(
     if not output_paths:
         return None, "Tidak ada file berhasil diproses.\n\n" + "\n".join(logs)
 
-    if len(output_paths) > 1:
-        zip_path = WORK_DIR / "humanized_batch.zip"
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for p in output_paths:
-                zf.write(p, p.name)
-        return str(zip_path), "\n".join(logs)
-
-    return str(output_paths[0]), "\n".join(logs)
+    return [str(p) for p in output_paths], "\n".join(logs)
 
 
 with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as demo:
@@ -89,7 +81,7 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
         """
         # Batch Video & Image Humanizer
         Upload video/gambar hasil generate AI, pilih fitur, lalu klik **Proses**.
-        Jika upload banyak file sekaligus, hasil didownload sebagai ZIP.
+        Hasil bisa didownload per file.
 
         **Format yang didukung:** `.mp4` &nbsp;·&nbsp; `.jpg` &nbsp;·&nbsp; `.jpeg` &nbsp;·&nbsp; `.png`
         """
@@ -131,13 +123,13 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
             btn = gr.Button("Proses", variant="primary", size="lg")
 
         with gr.Column(scale=2):
-            output_file = gr.File(label="Download Hasil")
+            output_files = gr.Files(label="Download Hasil (per file)")
             log_box = gr.Textbox(label="Log Proses", lines=14, interactive=False)
 
     btn.click(
         fn=run_humanizer,
         inputs=[files_input, crop_mode, mirror, grain, jitter, color_jitter, resize, scrub],
-        outputs=[output_file, log_box],
+        outputs=[output_files, log_box],
     )
 
 
