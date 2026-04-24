@@ -21,7 +21,7 @@ def run_humanizer(
     color_jitter,
     resize,
     scrub,
-    progress=gr.Progress(track_tqdm=True),
+    progress=gr.Progress(),
 ):
     if not files:
         return None, "Upload minimal satu file dulu."
