@@ -150,8 +150,8 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
     with gr.Row():
         with gr.Column(scale=3):
             urls_input = gr.Textbox(
-                label="URL TikTok (satu URL per baris, bisa banyak sekaligus)",
-                placeholder="https://www.tiktok.com/@user/video/123\nhttps://www.tiktok.com/@user/video/456",
+                label="URL Video (satu URL per baris — support TikTok, YouTube, Instagram, dll)",
+                placeholder="https://www.tiktok.com/@user/video/123\nhttps://www.youtube.com/watch?v=xxx",
                 lines=4,
             )
             dl_btn = gr.Button("Download", variant="primary")
