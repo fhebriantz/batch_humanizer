@@ -221,4 +221,6 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
 
 
 if __name__ == "__main__":
-    demo.launch()
+    import os
+    is_hf = bool(os.getenv("SPACE_ID"))
+    demo.launch(inbrowser=not is_hf)
