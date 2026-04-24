@@ -156,7 +156,7 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
             )
             dl_btn = gr.Button("Download", variant="primary")
         with gr.Column(scale=2):
-            dl_output = gr.Gallery(label="Hasil Download", columns=2, height="auto")
+            dl_output = gr.Files(label="Hasil Download")
             dl_log = gr.Textbox(label="Log Download", lines=5, interactive=False)
 
     gr.Markdown(
