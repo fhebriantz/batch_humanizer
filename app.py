@@ -1,6 +1,6 @@
 """Gradio Web UI — Batch Video & Image Humanizer."""
 
-import tempfile
+import shutil
 import threading
 import zipfile
 from pathlib import Path
@@ -10,6 +10,14 @@ import gradio as gr
 import humanizer as _hum
 
 _lock = threading.Lock()
+WORK_DIR = Path("/tmp/humanizer_work")
+
+
+def _reset_work_dir():
+    """Hapus dan buat ulang WORK_DIR agar bersih setiap run."""
+    if WORK_DIR.exists():
+        shutil.rmtree(WORK_DIR)
+    WORK_DIR.mkdir(parents=True)
 
 
 def run_humanizer(
@@ -38,17 +46,17 @@ def run_humanizer(
     if not any(v and v != "none" for v in features.values()):
         return None, "Pilih minimal satu fitur sebelum proses."
 
-    out_dir = Path(tempfile.mkdtemp())
     logs = []
     output_paths = []
 
     with _lock:
-        _hum.OUTPUT_DIR = out_dir
+        _reset_work_dir()
+        _hum.OUTPUT_DIR = WORK_DIR
 
         for i, fpath in enumerate(files):
             src = Path(fpath)
             ext = src.suffix.lower()
-            dst = out_dir / f"humanized_{src.name}"
+            dst = WORK_DIR / f"humanized_{src.name}"
             progress((i + 1, len(files)), desc=f"[{i+1}/{len(files)}] {src.name}")
             try:
                 if ext in _hum.VIDEO_EXTS:
@@ -67,7 +75,7 @@ def run_humanizer(
         return None, "Tidak ada file berhasil diproses.\n\n" + "\n".join(logs)
 
     if len(output_paths) > 1:
-        zip_path = out_dir / "humanized_batch.zip"
+        zip_path = WORK_DIR / "humanized_batch.zip"
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for p in output_paths:
                 zf.write(p, p.name)
