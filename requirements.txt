@@ -2,5 +2,5 @@ moviepy==2.1.2
 numpy>=1.24.0
 Pillow>=10.0.0
 gradio>=5.49.0
-audioop-lts
+audioop-lts; python_version >= "3.13"
 yt-dlp
