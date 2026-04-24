@@ -1,3 +1,14 @@
+---
+title: Batch Video Image Humanizer
+emoji: 🎬
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
+pinned: false
+---
+
 # Batch Video & Image Humanizer
 
 Script Python untuk automasi editing batch video dan gambar hasil generate AI.
