@@ -85,18 +85,46 @@ if not exist venv\.installed (
     pause
 )
 
-REM === Jalankan workflow ===
+REM === Pilih mode: CLI atau Web UI ===
+REM Kalau ada argumen CLI yang dikirim (misal --all), langsung ke mode CLI skip menu.
+if not "%~1"=="" goto run_cli
+
 echo.
 echo ============================================================
-echo   Menjalankan Batch Humanizer
+echo   Pilih Mode
+echo ============================================================
+echo    1. CLI       ^(humanizer.py - mode interaktif / batch folder input^)
+echo    2. Web UI    ^(app.py - Gradio di browser^)
+echo ============================================================
+set /p MODE="  Pilihan [1]: "
+
+if "%MODE%"=="2" goto run_web
+REM Default ke CLI
+
+:run_cli
+echo.
+echo ============================================================
+echo   Menjalankan Batch Humanizer ^(CLI^)
 echo   Input  : input\
 echo   Output : output\
 echo   Stop   : Ctrl+C
 echo ============================================================
 echo.
-
 python humanizer.py %*
+goto end
 
+:run_web
+echo.
+echo ============================================================
+echo   Menjalankan Web UI Gradio
+echo   Buka browser ke: http://127.0.0.1:7860
+echo   Stop           : Ctrl+C
+echo ============================================================
+echo.
+python app.py
+goto end
+
+:end
 echo.
 echo Selesai. Tekan tombol apa saja untuk menutup jendela.
 pause
