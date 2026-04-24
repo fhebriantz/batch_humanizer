@@ -14,9 +14,11 @@ pinned: false
 Script Python untuk automasi editing batch video dan gambar hasil generate AI.
 Menghapus jejak AI (watermark, metadata, tekstur mulus) secara otomatis.
 
+Tersedia dalam dua mode: **CLI** (`humanizer.py`) dan **Web UI Gradio** (`app.py`, deploy-ready untuk Hugging Face Spaces).
+
 ## Fitur
 
-- **Dynamic Crop** — potong 5% atas/bawah untuk hapus watermark (mode: both/top/bottom)
+- **Dynamic Crop** — potong 3.5% atas/bawah untuk hapus watermark (mode: both/top/bottom)
 - **Fill & Crop** — scale proporsional & center-crop ke 1080x1920 (tanpa distorsi)
 - **Grain/Noise** — FFmpeg noise filter 5%
 - **Horizontal Mirror** — FFmpeg hflip
@@ -27,7 +29,6 @@ Menghapus jejak AI (watermark, metadata, tekstur mulus) secara otomatis.
 - **FPS Matching** — output mengikuti FPS source (30→30, 60→60) tanpa frame duplication/dropping
 - **GPU Encoding** — auto-detect dengan smoke-test real (NVIDIA NVENC → Intel VAAPI → QSV)
 - **Multi-Format** — `.mp4`, `.jpg`, `.jpeg`, `.png`
-- **Google Sheets** — integrasi workflow dengan spreadsheet (default `Daily_Workflow`, override via env var `SPREADSHEET_NAME`)
 
 ## Instalasi
 
@@ -55,7 +56,7 @@ pip install -r requirements.txt
 
 ## Cara Pakai
 
-### Standalone (tanpa Google Sheets)
+### CLI
 
 ```
 python humanizer.py                     # Mode interaktif (tanya y/n per fitur)
@@ -64,23 +65,24 @@ python humanizer.py --all --gpu         # Semua fitur + GPU encoder
 python humanizer.py --crop --mirror     # Pilih fitur tertentu
 ```
 
-### Workflow + Google Sheets
-
-```
-python workflow.py                      # Mode interaktif
-python workflow.py --all --gpu          # Semua fitur + GPU
-```
-
 Hasil ada di folder `output/`.
+
+### Web UI (Gradio)
+
+```
+python app.py
+```
+
+Buka URL yang muncul di terminal (default `http://127.0.0.1:7860`). Upload file, pilih fitur, klik Proses.
 
 ### Daftar Flag
 
 | Flag | Keterangan |
 |---|---|
 | `--all` | Jalankan semua fitur tanpa tanya |
-| `--crop` | Crop 5% atas + 5% bawah |
-| `--top-crop` | Crop 5% atas saja |
-| `--bottom-crop` | Crop 5% bawah saja |
+| `--crop` | Crop 3.5% atas + bawah |
+| `--top-crop` | Crop 3.5% atas saja |
+| `--bottom-crop` | Crop 3.5% bawah saja |
 | `--no-watermark` | Eksplisit skip crop |
 | `--mirror` | Flip horizontal (FFmpeg) |
 | `--grain` | Tambah grain/noise 5% (FFmpeg) |
@@ -92,35 +94,20 @@ Hasil ada di folder `output/`.
 
 Mode interaktif (tanpa flag) akan tanya y/n untuk setiap fitur.
 
-## Workflow Google Sheets
+## Deploy ke Hugging Face Spaces
 
-### Persiapan
-
-1. Letakkan `credential.json` (service account) di root folder project
-2. Share spreadsheet (default `Daily_Workflow`) ke email service account
-3. Kolom spreadsheet: A=No, B=Jam, C=Akun, D=File, E=-, F=Download, G=Humanize, J=Timestamp
-
-**Pakai spreadsheet dengan nama lain?** Set env var sebelum jalankan script:
-```
-SPREADSHEET_NAME="Nama_Spreadsheet_Lain" python workflow.py
-```
-
-### Alur (Update Mode)
-
-1. Baca folder `input/`, extract nama akun dari filename (misal `Akun_01.mp4` → `Akun_01`)
-2. Cari baris di Sheets: Kolom C cocok DAN Kolom G masih FALSE (case insensitive)
-3. Jika ketemu → proses humanize → update baris (D=filename, F=✓, G=✓, J=timestamp)
-4. Jika tidak ketemu → append baris baru → proses → update
-5. File yang sudah TRUE otomatis di-skip
-
-Jika internet putus atau API limit, script tetap lanjut proses file berikutnya.
-
-### Penamaan File Output
+Repo ini sudah siap deploy ke HF Spaces. Cukup push ke remote HF:
 
 ```
-[NamaAkun]_[DDMMYYYY-HHMMSS].[ext]
-Contoh: Akun_01_20042026-143025.mp4
+git remote add hf https://huggingface.co/spaces/<username>/<space-name>
+git push hf main
 ```
+
+File yang relevan untuk HF Spaces:
+- `app.py` — entry point Gradio
+- `packages.txt` — install FFmpeg lewat apt
+- `requirements.txt` — Python dependencies
+- `README.md` — YAML frontmatter di atas wajib ada
 
 ## Arsitektur Processing
 
@@ -151,10 +138,11 @@ crop → mirror → grain → color jitter → fill & crop → save
 
 ```
 batch_humanizer/
-├── humanizer.py        # Script humanizer (standalone)
-├── workflow.py         # Script workflow + Google Sheets
-├── credential.json     # Service account key (jangan commit!)
-├── requirements.txt    # Dependencies
+├── humanizer.py        # CLI humanizer (core logic)
+├── app.py              # Gradio web UI
+├── packages.txt        # System deps untuk HF Spaces (ffmpeg)
+├── requirements.txt    # Python dependencies
+├── run.bat             # Windows launcher untuk CLI
 ├── input/              # Taruh video/gambar mentah di sini
 └── output/             # Hasil yang sudah diproses
 ```
@@ -167,7 +155,7 @@ Edit variabel di bagian atas `humanizer.py`:
 |---|---|---|
 | `TARGET_W` | `1080` | Lebar output standar 9:16 |
 | `TARGET_H` | `1920` | Tinggi output standar 9:16 |
-| `CROP_PERCENT` | `0.05` | Persentase crop atas & bawah |
+| `CROP_PERCENT` | `0.035` | Persentase crop atas & bawah |
 | `GRAIN_INTENSITY` | `0.05` | Intensitas noise overlay |
 | `JITTER_SCALE` | `1.01` | Skala zoom untuk jitter |
 | `JITTER_INTERVAL` | `0.5` | Interval perubahan jitter (detik) |

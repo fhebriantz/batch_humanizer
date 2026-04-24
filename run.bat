@@ -1,7 +1,7 @@
 @echo off
 REM ============================================================
 REM  Batch Humanizer - Windows Launcher
-REM  Double-click file ini untuk setup (sekali) lalu run workflow.
+REM  Double-click file ini untuk setup (sekali) lalu run humanizer.
 REM ============================================================
 
 setlocal enabledelayedexpansion
@@ -82,10 +82,6 @@ if not exist venv\.installed (
     echo [SETUP SELESAI] Semua dependencies terinstall!
     echo ============================================================
     echo.
-    echo TIP: Letakkan credential.json ^(service account Google^) di folder ini
-    echo      untuk mengaktifkan integrasi Google Sheets.
-    echo      Tanpa credential.json, workflow tetap jalan tanpa logging Sheets.
-    echo.
     pause
 )
 
@@ -99,7 +95,7 @@ echo   Stop   : Ctrl+C
 echo ============================================================
 echo.
 
-python workflow.py %*
+python humanizer.py %*
 
 echo.
 echo Selesai. Tekan tombol apa saja untuk menutup jendela.
