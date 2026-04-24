@@ -1,6 +1,7 @@
-"""Gradio Web UI — Batch Video & Image Humanizer."""
+"""Gradio Web UI — TikTok Downloader + Batch Video & Image Humanizer."""
 
 import shutil
+import subprocess
 import threading
 from pathlib import Path
 
@@ -8,16 +9,72 @@ import gradio as gr
 
 import humanizer as _hum
 
-_lock = threading.Lock()
+_dl_lock = threading.Lock()
+_proc_lock = threading.Lock()
+
+DOWNLOAD_DIR = Path("/tmp/humanizer_downloads")
 WORK_DIR = Path("/tmp/humanizer_work")
 
 
-def _reset_work_dir():
-    """Hapus dan buat ulang WORK_DIR agar bersih setiap run."""
-    if WORK_DIR.exists():
-        shutil.rmtree(WORK_DIR)
-    WORK_DIR.mkdir(parents=True)
+def _reset_dir(path: Path):
+    """Hapus dan buat ulang direktori — bersihkan file lama tiap run."""
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True)
 
+
+# ============================================================
+# SECTION 1 — TikTok Downloader
+# ============================================================
+
+def download_videos(urls_text, progress=gr.Progress()):
+    urls = [u.strip() for u in urls_text.strip().splitlines() if u.strip()]
+    if not urls:
+        return None, "Masukkan minimal satu URL, satu per baris."
+
+    with _dl_lock:
+        _reset_dir(DOWNLOAD_DIR)
+        downloaded = []
+        logs = []
+
+        for i, url in enumerate(urls):
+            progress((i + 1, len(urls)), desc=f"[{i+1}/{len(urls)}] Downloading...")
+            url_dir = DOWNLOAD_DIR / str(i)
+            url_dir.mkdir()
+            try:
+                result = subprocess.run(
+                    [
+                        "yt-dlp",
+                        "--no-playlist",
+                        "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                        "--merge-output-format", "mp4",
+                        "-o", str(url_dir / "%(title).80s.%(ext)s"),
+                        url,
+                    ],
+                    capture_output=True, text=True, timeout=120,
+                )
+                files = list(url_dir.glob("*.*"))
+                if result.returncode != 0 or not files:
+                    err = result.stderr.strip().splitlines()
+                    logs.append(f"ERR [{i+1}] {url[:60]}: {err[-1] if err else 'unknown'}")
+                    continue
+                for f in files:
+                    downloaded.append(str(f))
+                logs.append(f"OK  [{i+1}] {files[0].name}")
+            except subprocess.TimeoutExpired:
+                logs.append(f"ERR [{i+1}] {url[:60]}: timeout (120s)")
+            except Exception as e:
+                logs.append(f"ERR [{i+1}] {url[:60]}: {e}")
+
+    if not downloaded:
+        return None, "Tidak ada video berhasil didownload.\n\n" + "\n".join(logs)
+
+    return downloaded, "\n".join(logs)
+
+
+# ============================================================
+# SECTION 2 — Humanizer
+# ============================================================
 
 def run_humanizer(
     files,
@@ -48,8 +105,8 @@ def run_humanizer(
     logs = []
     output_paths = []
 
-    with _lock:
-        _reset_work_dir()
+    with _proc_lock:
+        _reset_dir(WORK_DIR)
         _hum.OUTPUT_DIR = WORK_DIR
 
         for i, fpath in enumerate(files):
@@ -76,28 +133,52 @@ def run_humanizer(
     return [str(p) for p in output_paths], "\n".join(logs)
 
 
+# ============================================================
+# UI
+# ============================================================
+
 with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as demo:
     gr.Markdown(
         """
         # Batch Video & Image Humanizer
-        Upload video/gambar hasil generate AI, pilih fitur, lalu klik **Proses**.
-        Hasil bisa didownload per file.
-
         **Format yang didukung:** `.mp4` &nbsp;·&nbsp; `.jpg` &nbsp;·&nbsp; `.jpeg` &nbsp;·&nbsp; `.png`
         """
     )
 
+    # ── Section 1: Downloader ──────────────────────────────
+    gr.Markdown("## 1. Download Video Referensi")
+    with gr.Row():
+        with gr.Column(scale=3):
+            urls_input = gr.Textbox(
+                label="URL TikTok (satu URL per baris, bisa banyak sekaligus)",
+                placeholder="https://www.tiktok.com/@user/video/123\nhttps://www.tiktok.com/@user/video/456",
+                lines=4,
+            )
+            dl_btn = gr.Button("Download", variant="primary")
+        with gr.Column(scale=2):
+            dl_output = gr.Files(label="Hasil Download")
+            dl_log = gr.Textbox(label="Log Download", lines=5, interactive=False)
+
+    gr.Markdown(
+        """
+        ---
+        > **Upload hasil download ke RunningHub** untuk generate video AI, lalu upload hasilnya ke bagian 2.
+        ---
+        """
+    )
+
+    # ── Section 2: Humanizer ──────────────────────────────
+    gr.Markdown("## 2. Humanizer — Hapus Fingerprint AI")
     with gr.Row():
         with gr.Column(scale=3):
             files_input = gr.Files(
-                label="Upload File (bisa banyak sekaligus)",
+                label="Upload File Hasil AI (bisa banyak sekaligus)",
                 file_count="multiple",
                 file_types=[".mp4", ".jpg", ".jpeg", ".png"],
                 type="filepath",
             )
 
             gr.Markdown("### Fitur Humanizer")
-
             crop_mode = gr.Radio(
                 choices=[
                     ("Lewati crop", "none"),
@@ -109,7 +190,6 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
                 label="Crop Watermark",
                 info="Potong 3.5% tepi atas/bawah untuk hapus watermark AI",
             )
-
             with gr.Row():
                 mirror = gr.Checkbox(label="Mirror — flip horizontal", value=True)
                 grain = gr.Checkbox(label="Grain — noise 5%", value=True)
@@ -120,13 +200,20 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
                 resize = gr.Checkbox(label="Resize ke 1080×1920 (fill & crop)", value=False)
                 scrub = gr.Checkbox(label="Metadata Scrub — inject iPhone 13 (video only)", value=True)
 
-            btn = gr.Button("Proses", variant="primary", size="lg")
+            proc_btn = gr.Button("Proses", variant="primary", size="lg")
 
         with gr.Column(scale=2):
             output_files = gr.Files(label="Download Hasil (per file)")
             log_box = gr.Textbox(label="Log Proses", lines=14, interactive=False)
 
-    btn.click(
+    # ── Event handlers ─────────────────────────────────────
+    dl_btn.click(
+        fn=download_videos,
+        inputs=[urls_input],
+        outputs=[dl_output, dl_log],
+    )
+
+    proc_btn.click(
         fn=run_humanizer,
         inputs=[files_input, crop_mode, mirror, grain, jitter, color_jitter, resize, scrub],
         outputs=[output_files, log_box],
