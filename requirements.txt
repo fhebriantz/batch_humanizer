@@ -2,3 +2,4 @@ moviepy==2.1.2
 numpy>=1.24.0
 Pillow>=10.0.0
 gradio>=5.0.0
+audioop-lts
