@@ -4,3 +4,4 @@ Pillow>=10.0.0
 gradio>=5.49.0
 audioop-lts; python_version >= "3.13"
 yt-dlp
+librosa>=0.10.0

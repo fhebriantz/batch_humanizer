@@ -85,6 +85,7 @@ def run_humanizer(
     color_jitter,
     resize,
     scrub,
+    beat_zoom,
     progress=gr.Progress(),
 ):
     if not files:
@@ -98,6 +99,7 @@ def run_humanizer(
         "color_jitter": color_jitter,
         "resize": resize,
         "scrub": scrub,
+        "beat_zoom": beat_zoom,
     }
     if not any(v and v != "none" for v in features.values()):
         return None, "Pilih minimal satu fitur sebelum proses."
@@ -200,6 +202,13 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
                 resize = gr.Checkbox(label="Resize ke 1080×1920 (fill & crop)", value=False)
                 scrub = gr.Checkbox(label="Metadata Scrub — inject iPhone 13 (video only)", value=True)
 
+            gr.Markdown("### Enhancement — Retention Boost")
+            with gr.Row():
+                beat_zoom = gr.Checkbox(
+                    label="Beat Zoom Punch — subtle zoom sync ke beat lagu (video only)",
+                    value=True,
+                )
+
             proc_btn = gr.Button("Proses", variant="primary", size="lg")
 
         with gr.Column(scale=2):
@@ -215,7 +224,7 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
 
     proc_btn.click(
         fn=run_humanizer,
-        inputs=[files_input, crop_mode, mirror, grain, jitter, color_jitter, resize, scrub],
+        inputs=[files_input, crop_mode, mirror, grain, jitter, color_jitter, resize, scrub, beat_zoom],
         outputs=[output_files, log_box],
     )
 

@@ -146,6 +146,15 @@ def interactive_setup(has_video: bool) -> dict:
     else:
         features["scrub"] = False
 
+    # Beat zoom punch (video only, retention enhancement)
+    if has_video:
+        features["beat_zoom"] = ask_yn(
+            "Beat zoom punch — subtle zoom sync ke beat lagu (video only)?",
+            default=False,
+        )
+    else:
+        features["beat_zoom"] = False
+
     # GPU
     features["gpu"] = ask_yn("Gunakan GPU encoder (lebih cepat)?", default=False)
 
@@ -325,53 +334,17 @@ def color_jitter_image(img: Image.Image) -> Image.Image:
 # FFMPEG POST-PROCESSING (satu pass: mirror + grain + color + resize)
 # ============================================================
 
-def ffmpeg_post_process(video_path: Path, features: dict):
-    """Jalankan semua FFmpeg filter dalam satu pass encoding.
+def ffmpeg_post_process(video_path: Path, filter_strings: list):
+    """Jalankan single FFmpeg pass dengan filter strings yang sudah di-build.
 
-    Gabungkan mirror, grain, color jitter, dan resize jadi satu filter chain.
-    Satu kali encode = jauh lebih cepat daripada encode berkali-kali.
+    Filter strings di-build oleh Stage objects (lihat stages_existing.py /
+    stages_enhancement.py). Fungsi ini cuma handle FFmpeg command + execute.
     """
-    filters = []
-
-    # Mirror (hflip)
-    if features.get("mirror"):
-        filters.append("hflip")
-
-    # Grain (noise filter)
-    if features.get("grain"):
-        # noise: allf = semua frame, strength per channel
-        strength = int(GRAIN_INTENSITY * 255)
-        filters.append(f"noise=alls={strength}:allf=t")
-
-    # Color jitter (eq filter)
-    if features.get("color_jitter"):
-        rng = random.Random()
-        brightness = rng.uniform(-0.02, 0.02)
-        contrast = rng.uniform(1.0, 1.05)
-        saturation = rng.uniform(1.0, 1.1)
-        gamma_r = rng.uniform(0.98, 1.02)
-        gamma_b = rng.uniform(0.98, 1.02)
-        filters.append(
-            f"eq=brightness={brightness:.4f}"
-            f":contrast={contrast:.4f}"
-            f":saturation={saturation:.4f}"
-            f":gamma_r={gamma_r:.4f}"
-            f":gamma_b={gamma_b:.4f}"
-        )
-
-    # Resize (fill & crop ke 1080x1920)
-    if features.get("resize"):
-        filters.append(
-            f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=increase,"
-            f"setsar=1,"
-            f"crop={TARGET_W}:{TARGET_H}"
-        )
-
-    if not filters:
+    if not filter_strings:
         return
 
     tmp_path = video_path.with_suffix(".post.mp4")
-    vf = ",".join(filters) + ACTIVE_ENCODER["filter_suffix"]
+    vf = ",".join(filter_strings) + ACTIVE_ENCODER["filter_suffix"]
 
     # Audio humanize — subtle resample + volume shift untuk ganti audio hash
     # tanpa perubahan yang kedengeran. Pakai random volume supaya tiap run
@@ -465,8 +438,30 @@ def scrub_metadata(video_path: Path):
 # PIPELINE — VIDEO
 # ============================================================
 
+def _build_pipeline():
+    """Build pipeline dengan semua stage existing + enhancement.
+
+    Lazy import biar humanizer.py tetap bisa di-import oleh stages_existing.py
+    tanpa circular import.
+    """
+    from pipeline import Pipeline
+    from stages_existing import register_existing
+
+    pipe = Pipeline()
+    register_existing(pipe)
+
+    # Enhancement stages (optional, dipanggil kalau modulnya ada)
+    try:
+        from stages_enhancement import register_enhancement
+        register_enhancement(pipe)
+    except ImportError:
+        pass
+
+    return pipe
+
+
 def process_video(input_path: Path, output_path: Path, features: dict):
-    """Pipeline lengkap untuk satu video."""
+    """Pipeline lengkap untuk satu video — pakai modular Stage/Pipeline."""
     print(f"\n{'='*60}")
     print(f"  Processing (video): {input_path.name}")
     print(f"{'='*60}")
@@ -481,36 +476,37 @@ def process_video(input_path: Path, output_path: Path, features: dict):
     print(f"  Duration   : {clip.duration:.1f}s")
     print(f"  FPS        : {clip.fps}")
 
+    pipe = _build_pipeline()
+    ctx = {
+        "width": w,
+        "height": h,
+        "duration": clip.duration,
+        "fps": clip.fps,
+        "input_path": input_path,
+    }
+
     # Tentukan apakah FFmpeg phase akan jalan — berpengaruh ke kualitas MoviePy intermediate
-    will_run_ffmpeg = any([
-        features["mirror"], features["grain"],
-        features["color_jitter"], features["resize"],
-    ])
+    will_run_ffmpeg = pipe.has_active("ffmpeg_filter", features)
 
-    # === PHASE 1: MoviePy (hanya crop + jitter) ===
-    has_moviepy_work = features["crop"] != "none" or features["jitter"]
+    # === PHASE 1: MoviePy stages (crop, jitter, ...) ===
+    moviepy_stages = pipe.active_by_layer("moviepy", features)
 
-    if has_moviepy_work:
-        step = 0
-        moviepy_steps = sum([
-            features["crop"] != "none",
-            features["jitter"],
-        ])
-
-        # Crop
-        if features["crop"] != "none":
-            step += 1
-            mode = features["crop"]
-            print(f"  [MoviePy {step}/{moviepy_steps}] Cropping watermark ({mode})...")
-            clip = crop_watermark(clip, mode)
-            cw, ch = clip.size
-            print(f"         After crop: {cw}x{ch}")
-
-        # Jitter
-        if features["jitter"]:
-            step += 1
-            print(f"  [MoviePy {step}/{moviepy_steps}] Adding subtle jitter (zoom {JITTER_SCALE:.2f}x)...")
-            clip = apply_jitter(clip)
+    if moviepy_stages:
+        total = len(moviepy_stages)
+        for step, stage in enumerate(moviepy_stages, 1):
+            if stage.name == "crop":
+                mode = features["crop"]
+                print(f"  [MoviePy {step}/{total}] Cropping watermark ({mode})...")
+                clip = stage.apply_moviepy(clip, features, ctx)
+                cw, ch = clip.size
+                print(f"         After crop: {cw}x{ch}")
+                ctx["width"], ctx["height"] = cw, ch
+            elif stage.name == "jitter":
+                print(f"  [MoviePy {step}/{total}] Adding subtle jitter (zoom {JITTER_SCALE:.2f}x)...")
+                clip = stage.apply_moviepy(clip, features, ctx)
+            else:
+                print(f"  [MoviePy {step}/{total}] {stage.name}...")
+                clip = stage.apply_moviepy(clip, features, ctx)
 
         # Restore audio & export — samain fps dengan source
         clip = clip.with_audio(original_audio)
@@ -549,26 +545,30 @@ def process_video(input_path: Path, output_path: Path, features: dict):
         import shutil
         shutil.copy2(str(input_path), str(output_path))
 
-    # === PHASE 2: FFmpeg satu pass (mirror + grain + color jitter + resize) ===
-    ffmpeg_features = {
-        "mirror": features["mirror"],
-        "grain": features["grain"],
-        "color_jitter": features["color_jitter"],
-        "resize": features["resize"],
-    }
-    has_ffmpeg_work = any(ffmpeg_features.values())
+    # === PHASE 2: FFmpeg filter stages (satu pass) ===
+    filter_stages = pipe.active_by_layer("ffmpeg_filter", features)
+    if filter_stages:
+        filter_strings = []
+        active_names = []
+        for stage in filter_stages:
+            f = stage.ffmpeg_filter(features, ctx)
+            if f:
+                filter_strings.append(f)
+                active_names.append(stage.name)
 
-    if has_ffmpeg_work:
-        active_names = [k for k, v in ffmpeg_features.items() if v]
-        print(f"  [FFmpeg] {', '.join(active_names)} (satu pass)...")
-        ffmpeg_post_process(output_path, ffmpeg_features)
-        if features["resize"]:
-            print(f"         Output: {TARGET_W}x{TARGET_H} (9:16, center-aligned)")
+        if filter_strings:
+            print(f"  [FFmpeg] {', '.join(active_names)} (satu pass)...")
+            ffmpeg_post_process(output_path, filter_strings)
+            if features.get("resize"):
+                print(f"         Output: {TARGET_W}x{TARGET_H} (9:16, center-aligned)")
 
-    # === PHASE 3: Metadata scrub (copy stream, cepat) ===
-    if features["scrub"]:
-        print("  Scrubbing metadata & injecting iPhone 13 EXIF...")
-        scrub_metadata(output_path)
+    # === PHASE 3: FFmpeg stream stages (scrub, ...) ===
+    for stage in pipe.active_by_layer("ffmpeg_stream", features):
+        if stage.name == "scrub":
+            print("  Scrubbing metadata & injecting iPhone 13 EXIF...")
+        else:
+            print(f"  [Stream] {stage.name}...")
+        stage.ffmpeg_stream(output_path, features, ctx)
 
     print(f"  DONE: {output_path.name}")
 
@@ -696,6 +696,7 @@ def parse_args():
     parser.add_argument("--color-jitter", action="store_true", help="Random color jitter (brightness/contrast/saturation/gamma)")
     parser.add_argument("--resize", action="store_true", help=f"Fill & crop ke {TARGET_W}x{TARGET_H}")
     parser.add_argument("--scrub", action="store_true", help="Scrub metadata (video only)")
+    parser.add_argument("--beat-zoom", action="store_true", help="Subtle zoom punch sync dengan beat lagu (retention boost, video only)")
     parser.add_argument("--gpu", action="store_true", help="Gunakan GPU encoder (Intel QSV / NVIDIA NVENC)")
 
     return parser.parse_args()
@@ -779,6 +780,7 @@ def features_from_args(args) -> dict | None:
         args.all, args.crop, args.top_crop, args.bottom_crop,
         args.no_watermark, args.mirror, args.grain,
         args.jitter, args.color_jitter, args.resize, args.scrub,
+        args.beat_zoom,
     ])
 
     if not has_flag:
@@ -793,6 +795,7 @@ def features_from_args(args) -> dict | None:
             "color_jitter": True,
             "resize": True,
             "scrub": True,
+            "beat_zoom": True,
         }
 
     # Tentukan crop mode
@@ -813,6 +816,7 @@ def features_from_args(args) -> dict | None:
         "color_jitter": args.color_jitter,
         "resize": args.resize,
         "scrub": args.scrub,
+        "beat_zoom": args.beat_zoom,
     }
 
 
@@ -820,12 +824,13 @@ def print_features(features: dict):
     """Tampilkan ringkasan fitur yang aktif."""
     labels = {
         "crop": f"Crop ({features['crop']})" if features["crop"] != "none" else None,
-        "mirror": "Mirror" if features["mirror"] else None,
-        "grain": "Grain" if features["grain"] else None,
-        "jitter": "Jitter" if features["jitter"] else None,
-        "color_jitter": "Color jitter" if features["color_jitter"] else None,
-        "resize": f"Resize {TARGET_W}x{TARGET_H}" if features["resize"] else None,
-        "scrub": "Metadata scrub" if features["scrub"] else None,
+        "mirror": "Mirror" if features.get("mirror") else None,
+        "grain": "Grain" if features.get("grain") else None,
+        "jitter": "Jitter" if features.get("jitter") else None,
+        "color_jitter": "Color jitter" if features.get("color_jitter") else None,
+        "resize": f"Resize {TARGET_W}x{TARGET_H}" if features.get("resize") else None,
+        "scrub": "Metadata scrub" if features.get("scrub") else None,
+        "beat_zoom": "Beat zoom punch" if features.get("beat_zoom") else None,
     }
     active = [v for v in labels.values() if v]
     if active:
