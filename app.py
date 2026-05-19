@@ -86,6 +86,8 @@ def run_humanizer(
     resize,
     scrub,
     beat_zoom,
+    random_crop,
+    random_crop_anchor,
     progress=gr.Progress(),
 ):
     if not files:
@@ -100,6 +102,8 @@ def run_humanizer(
         "resize": resize,
         "scrub": scrub,
         "beat_zoom": beat_zoom,
+        "random_crop": random_crop,
+        "random_crop_anchor": random_crop_anchor,
     }
     if not any(v and v != "none" for v in features.values()):
         return None, "Pilih minimal satu fitur sebelum proses."
@@ -194,7 +198,7 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
             )
             with gr.Row():
                 mirror = gr.Checkbox(label="Mirror — flip horizontal", value=True)
-                grain = gr.Checkbox(label="Grain — noise 5%", value=True)
+                grain = gr.Checkbox(label="Grain — noise 3%", value=True)
             with gr.Row():
                 jitter = gr.Checkbox(label="Jitter — subtle zoom drift (video only)", value=True)
                 color_jitter = gr.Checkbox(label="Color Jitter — brightness/contrast/saturation", value=True)
@@ -205,9 +209,28 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
             gr.Markdown("### Enhancement — Retention Boost")
             with gr.Row():
                 beat_zoom = gr.Checkbox(
-                    label="Beat Zoom Punch — subtle zoom sync ke beat lagu (video only)",
+                    label="Beat Zoom Punch — subtle zoom sync ke tiap beat (video only)",
                     value=True,
                 )
+                random_crop = gr.Checkbox(
+                    label="Beat Step Zoom — zoom 1.0x ↔ 1.15x ganti tiap 4 beats (video only)",
+                    value=False,
+                )
+            with gr.Group(visible=False) as anchor_group:
+                random_crop_anchor = gr.Radio(
+                    choices=[
+                        ("Bottom (bawah utuh, atas ke-crop)", "bottom"),
+                        ("Center (atas+bawah ke-crop seimbang)", "center"),
+                        ("Top (atas utuh, bawah ke-crop)", "top"),
+                    ],
+                    value="bottom",
+                    label="Beat Step Zoom — Anchor",
+                )
+            random_crop.change(
+                fn=lambda checked: gr.update(visible=checked),
+                inputs=[random_crop],
+                outputs=[anchor_group],
+            )
 
             proc_btn = gr.Button("Proses", variant="primary", size="lg")
 
@@ -224,7 +247,10 @@ with gr.Blocks(title="Batch Video & Image Humanizer", theme=gr.themes.Soft()) as
 
     proc_btn.click(
         fn=run_humanizer,
-        inputs=[files_input, crop_mode, mirror, grain, jitter, color_jitter, resize, scrub, beat_zoom],
+        inputs=[
+            files_input, crop_mode, mirror, grain, jitter, color_jitter, resize, scrub,
+            beat_zoom, random_crop, random_crop_anchor,
+        ],
         outputs=[output_files, log_box],
     )
 

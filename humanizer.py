@@ -26,10 +26,10 @@ OUTPUT_DIR = Path("output")
 # Geometri output
 TARGET_W = 1080             # output width standar 9:16
 TARGET_H = 1920             # output height standar 9:16
-CROP_PERCENT = 0.035        # 5% atas & bawah
+CROP_PERCENT = 0.035        # 3.5% atas & bawah
 
 # Intensitas efek humanizer
-GRAIN_INTENSITY = 0.05      # 5% noise
+GRAIN_INTENSITY = 0.03      # 3% noise
 JITTER_SCALE = 1.01         # zoom 1.01x
 JITTER_INTERVAL = 0.5       # ganti offset tiap 0.5 detik
 
@@ -108,6 +108,23 @@ def ask_crop_mode() -> str:
         print("  Ketik 1, 2, atau 3.")
 
 
+def ask_anchor_mode() -> str:
+    """Tanya user mau anchor zoom di mana (untuk beat step zoom)."""
+    print("  Pilih anchor zoom:")
+    print("    1. Bottom (default - bagian bawah tidak terpotong)")
+    print("    2. Center (atas+bawah terpotong seimbang)")
+    print("    3. Top    (bagian atas tidak terpotong)")
+    while True:
+        answer = input("  Pilihan [1]: ").strip()
+        if answer in ("", "1"):
+            return "bottom"
+        if answer == "2":
+            return "center"
+        if answer == "3":
+            return "top"
+        print("  Ketik 1, 2, atau 3.")
+
+
 def interactive_setup(has_video: bool) -> dict:
     """Tanya user fitur apa saja yang mau dijalankan."""
     print("=" * 60)
@@ -117,7 +134,7 @@ def interactive_setup(has_video: bool) -> dict:
     features = {}
 
     # Crop
-    if ask_yn("Crop watermark (potong 5% atas/bawah)?"):
+    if ask_yn("Crop watermark (potong 3.5% atas/bawah)?"):
         features["crop"] = ask_crop_mode()
     else:
         features["crop"] = "none"
@@ -126,7 +143,7 @@ def interactive_setup(has_video: bool) -> dict:
     features["mirror"] = ask_yn("Mirror (flip horizontal)?")
 
     # Grain
-    features["grain"] = ask_yn("Grain/noise (overlay 5%)?")
+    features["grain"] = ask_yn("Grain/noise (overlay 3%)?")
 
     # Jitter (video only)
     if has_video:
@@ -154,6 +171,20 @@ def interactive_setup(has_video: bool) -> dict:
         )
     else:
         features["beat_zoom"] = False
+
+    # Beat step zoom (alternating 1.0/1.20 per 4 beats)
+    if has_video:
+        features["random_crop"] = ask_yn(
+            "Beat step zoom — zoom 1.0x <-> 1.15x ganti tiap 4 beats (video only)?",
+            default=False,
+        )
+        if features["random_crop"]:
+            features["random_crop_anchor"] = ask_anchor_mode()
+        else:
+            features["random_crop_anchor"] = "bottom"
+    else:
+        features["random_crop"] = False
+        features["random_crop_anchor"] = "bottom"
 
     # GPU
     features["gpu"] = ask_yn("Gunakan GPU encoder (lebih cepat)?", default=False)
@@ -675,15 +706,15 @@ def parse_args():
     crop_group = parser.add_mutually_exclusive_group()
     crop_group.add_argument(
         "--crop", action="store_true",
-        help="Crop 5%% atas + bawah",
+        help="Crop 3.5%% atas + bawah",
     )
     crop_group.add_argument(
         "--top-crop", action="store_true",
-        help="Crop 5%% bagian atas saja",
+        help="Crop 3.5%% bagian atas saja",
     )
     crop_group.add_argument(
         "--bottom-crop", action="store_true",
-        help="Crop 5%% bagian bawah saja",
+        help="Crop 3.5%% bagian bawah saja",
     )
     crop_group.add_argument(
         "--no-watermark", action="store_true",
@@ -691,12 +722,15 @@ def parse_args():
     )
 
     parser.add_argument("--mirror", action="store_true", help="Flip horizontal")
-    parser.add_argument("--grain", action="store_true", help="Tambah grain/noise 5%%")
+    parser.add_argument("--grain", action="store_true", help="Tambah grain/noise 3%%")
     parser.add_argument("--jitter", action="store_true", help="Subtle jitter/zoom (video only)")
     parser.add_argument("--color-jitter", action="store_true", help="Random color jitter (brightness/contrast/saturation/gamma)")
     parser.add_argument("--resize", action="store_true", help=f"Fill & crop ke {TARGET_W}x{TARGET_H}")
     parser.add_argument("--scrub", action="store_true", help="Scrub metadata (video only)")
     parser.add_argument("--beat-zoom", action="store_true", help="Subtle zoom punch sync dengan beat lagu (retention boost, video only)")
+    parser.add_argument("--random-crop", action="store_true", help="Beat step zoom: 1.0x <-> 1.15x ganti tiap 4 beats (video only)")
+    parser.add_argument("--random-crop-anchor", choices=["top", "center", "bottom"], default="bottom",
+                        help="Anchor crop untuk beat step zoom (default: bottom)")
     parser.add_argument("--gpu", action="store_true", help="Gunakan GPU encoder (Intel QSV / NVIDIA NVENC)")
 
     return parser.parse_args()
@@ -780,7 +814,7 @@ def features_from_args(args) -> dict | None:
         args.all, args.crop, args.top_crop, args.bottom_crop,
         args.no_watermark, args.mirror, args.grain,
         args.jitter, args.color_jitter, args.resize, args.scrub,
-        args.beat_zoom,
+        args.beat_zoom, args.random_crop,
     ])
 
     if not has_flag:
@@ -796,6 +830,8 @@ def features_from_args(args) -> dict | None:
             "resize": True,
             "scrub": True,
             "beat_zoom": True,
+            "random_crop": True,
+            "random_crop_anchor": args.random_crop_anchor,
         }
 
     # Tentukan crop mode
@@ -817,6 +853,8 @@ def features_from_args(args) -> dict | None:
         "resize": args.resize,
         "scrub": args.scrub,
         "beat_zoom": args.beat_zoom,
+        "random_crop": args.random_crop,
+        "random_crop_anchor": args.random_crop_anchor,
     }
 
 
@@ -831,6 +869,10 @@ def print_features(features: dict):
         "resize": f"Resize {TARGET_W}x{TARGET_H}" if features.get("resize") else None,
         "scrub": "Metadata scrub" if features.get("scrub") else None,
         "beat_zoom": "Beat zoom punch" if features.get("beat_zoom") else None,
+        "random_crop": (
+            f"Beat step zoom (anchor {features.get('random_crop_anchor', 'bottom')})"
+            if features.get("random_crop") else None
+        ),
     }
     active = [v for v in labels.values() if v]
     if active:
