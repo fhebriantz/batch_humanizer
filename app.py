@@ -1,7 +1,18 @@
 """Gradio Web UI — TikTok Downloader + Batch Video & Image Humanizer."""
 
+import sys
+
+# Force UTF-8 stdout/stderr di Windows (lihat humanizer.py)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 import shutil
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -12,8 +23,10 @@ import humanizer as _hum
 _dl_lock = threading.Lock()
 _proc_lock = threading.Lock()
 
-DOWNLOAD_DIR = Path("/tmp/humanizer_downloads")
-WORK_DIR = Path("/tmp/humanizer_work")
+# Cross-platform temp paths — Linux/HF Spaces: /tmp/..., Windows: %TEMP%\...
+_TMP = Path(tempfile.gettempdir())
+DOWNLOAD_DIR = _TMP / "humanizer_downloads"
+WORK_DIR = _TMP / "humanizer_work"
 
 
 def _reset_dir(path: Path):

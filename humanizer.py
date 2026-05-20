@@ -4,8 +4,19 @@ Menghapus jejak AI dari video/gambar influencer secara batch.
 Fitur: auto-crop watermark, grain, mirror, subtle jitter, metadata scrub, resize.
 """
 
-import argparse
 import sys
+
+# Force UTF-8 stdout/stderr di Windows — cegah UnicodeEncodeError
+# pada print() yang punya karakter non-ASCII (→ ≈ α ↔ dll).
+# Default Windows console pakai cp1252/cp437 yang gak bisa encode unicode.
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+import argparse
 import json
 import random
 import subprocess
